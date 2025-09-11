@@ -1,11 +1,11 @@
-name: CI - Build and Push Docker Image
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]   # Runs whenever you push to main branch
-  workflow_dispatch:        # 👈 Allows manual trigger from GitHub Actions tab
+    branches: [ "main" ]
 
 jobs:
+  # 1. Build and Push Docker image
   build-and-push:
     runs-on: ubuntu-latest
 
@@ -19,10 +19,31 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build Docker image
-        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/health-webapp-demo:latest .
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/health-webapp:latest
 
-      - name: Push Docker image
-        run: docker push ${{ secrets.DOCKER_USERNAME }}/health-webapp-demo:latest
+  # 2. Deploy to EC2
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
 
+    steps:
+      - name: Deploy to EC2 over SSH
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_KEY }}
+          port: 22
+          script: |
+            set -e
+            printf '%s' "${{ secrets.DOCKER_PASSWORD }}" | sudo docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+            sudo docker pull ${{ secrets.DOCKER_USERNAME }}/health-webapp:latest
+            sudo docker stop health-webapp || true
+            sudo docker rm health-webapp || true
+            sudo docker run -d -p 80:5000 --name health-webapp --restart unless-stopped ${{ secrets.DOCKER_USERNAME }}/health-webapp:latest
 
